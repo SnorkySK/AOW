@@ -1,4 +1,5 @@
 import pygame
+import time
 
 # Initialisation de Pygame
 pygame.init()
@@ -25,6 +26,7 @@ FPS = 30
 UNIT_HEALTH = 50
 TOWER_DAMAGE = 5
 TOWER_RANGE = WIDTH // 4  # Un quart de la distance totale
+COOLDOWN_TIME = 2  # Cooldown de 2 secondes entre chaque invocation d'unité
 
 # Classe Base
 class Base:
@@ -60,28 +62,39 @@ class Base:
         return self.health <= 0
 
     def attack_units(self, units):
+        if self.is_destroyed():
+            return  # Ne pas attaquer si la tour est détruite
+
+        # Trouver la première unité dans la portée de la tour
         for unit in units:
             distance_to_unit = self.rect.centerx - unit.rect.centerx
             if self.is_enemy and abs(distance_to_unit) <= TOWER_RANGE:
                 unit.take_damage(TOWER_DAMAGE / FPS)
+                break  # Attaquer seulement une unité à la fois
 
 # Classe Unité
 class Unit:
     def __init__(self, x, y, target_base):
         self.rect = pygame.Rect(x, y, UNIT_WIDTH, UNIT_HEIGHT)
         self.target_base = target_base
-        self.active = False
+        self.active = True
         self.attacking = False
         self.attack_timer = 0
         self.health = UNIT_HEALTH
         self.max_health = UNIT_HEALTH
 
-    def move(self):
+    def move(self, units):
         if self.active and not self.attacking:
-            if self.rect.right < self.target_base.rect.left:  # Assurer que l'unité se dirige vers la base
+            # Vérifier la collision avec d'autres unités
+            next_rect = self.rect.copy()
+            next_rect.x += UNIT_SPEED
+            collision = any(next_rect.colliderect(unit.rect) for unit in units if unit is not self)
+
+            if not collision and self.rect.right < self.target_base.rect.left:
                 self.rect.x += UNIT_SPEED
             else:
-                self.attacking = True  # Commencer l'attaque une fois qu'elle atteint la base
+                if self.rect.right >= self.target_base.rect.left:
+                    self.attacking = True  # Commencer l'attaque une fois qu'elle atteint la base
 
     def attack(self):
         if self.attacking:
@@ -95,27 +108,31 @@ class Unit:
         self.health -= amount
         if self.health <= 0:
             self.active = False
-            self.attacking = False
             self.rect.x = -100  # Retire l'unité de l'écran (elle est détruite)
 
     def draw(self, win):
-        pygame.draw.rect(win, RED, self.rect)
-        
-        # Dessiner la barre de vie de l'unité
-        health_bar_width = UNIT_WIDTH
-        health_ratio = self.health / self.max_health
-        pygame.draw.rect(win, RED, (self.rect.x, self.rect.y - 10, health_bar_width, 3))
-        pygame.draw.rect(win, GREEN, (self.rect.x, self.rect.y - 10, health_bar_width * health_ratio, 3))
+        if self.active:
+            pygame.draw.rect(win, RED, self.rect)
+            
+            # Dessiner la barre de vie de l'unité
+            health_bar_width = UNIT_WIDTH
+            health_ratio = self.health / self.max_health
+            pygame.draw.rect(win, RED, (self.rect.x, self.rect.y - 10, health_bar_width, 3))
+            pygame.draw.rect(win, GREEN, (self.rect.x, self.rect.y - 10, health_bar_width * health_ratio, 3))
 
 # Initialisation des bases
 player_base = Base(50, HEIGHT - BASE_HEIGHT, 100, BLUE)
 enemy_base = Base(WIDTH - 100, HEIGHT - BASE_HEIGHT, 100, RED, is_enemy=True)
 
-# Initialisation des unités (inactive au départ)
-units = [Unit(100, HEIGHT - UNIT_HEIGHT - BASE_HEIGHT, enemy_base)]
+# Initialisation des unités
+units = []  # La liste des unités est initialisée ici
+
+# Variable pour le cooldown d'invocation
+last_invocation_time = 0
 
 # Boucle principale du jeu
 def main():
+    global units, last_invocation_time  # Déclarer la liste 'units' et le temps d'invocation comme variables globales
     clock = pygame.time.Clock()
     run = True
 
@@ -127,17 +144,23 @@ def main():
                 run = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
-                    # Activer l'unité lorsque l'espace est pressé
-                    for unit in units:
-                        unit.active = True
+                    current_time = time.time()
+                    if current_time - last_invocation_time >= COOLDOWN_TIME:
+                        # Ajouter une nouvelle unité lorsque l'espace est pressé et que le cooldown est terminé
+                        new_unit = Unit(100, HEIGHT - UNIT_HEIGHT - BASE_HEIGHT, enemy_base)
+                        units.append(new_unit)
+                        last_invocation_time = current_time
 
         # Déplacement et attaque des unités
         for unit in units:
-            unit.move()
+            unit.move(units)
             unit.attack()
 
         # Les tours attaquent les unités à portée
         enemy_base.attack_units(units)
+
+        # Retirer les unités mortes
+        units = [unit for unit in units if unit.active]
 
         # Affichage des éléments
         WIN.fill(BLACK)
